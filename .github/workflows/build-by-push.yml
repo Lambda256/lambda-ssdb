@@ -1,0 +1,105 @@
+name: Docker Build by push
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          persist-credentials: false
+
+      - name: Extract name from version.json
+        uses: sergeysova/jq-action@v2
+        id: name
+        with:
+          cmd: 'jq .name version.json -r'
+
+      - name: Extract version from version.json
+        uses: sergeysova/jq-action@v2
+        id: version
+        with:
+          cmd: 'jq .version version.json -r'
+
+      - name: Get Git Commit SHA
+        run: |
+          echo "COMMIT_SHA=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_ENV
+          echo "BRANCH=${{ github.ref_name }}" >> $GITHUB_ENV
+
+      - name: Get latest commit SHA on develop
+        if: ${{ env.BRANCH == 'main' }}
+        run: |
+          echo "DEVELOP_SHA=$(git rev-parse origin/develop | cut -c1-7)" >> $GITHUB_ENV
+
+      - name: Check if main SHA is the same as develop
+        if: ${{ env.BRANCH == 'main' }}
+        run: |
+          if [ "${{ env.COMMIT_SHA }}" == "${{ env.DEVELOP_SHA }}" ]; then
+            echo "DOCKER_BUILD=false" >> $GITHUB_ENV
+          else
+            echo "DOCKER_BUILD=true" >> $GITHUB_ENV
+          fi
+
+      - name: Set up Docker Buildx
+        if: ${{ env.BRANCH == 'develop' || (env.BRANCH == 'main' && env.DOCKER_BUILD == 'true') }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        if: ${{ env.BRANCH == 'develop' || (env.BRANCH == 'main' && env.DOCKER_BUILD == 'true') }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Build and push
+        if: ${{ env.BRANCH == 'develop' || (env.BRANCH == 'main' && env.DOCKER_BUILD == 'true') }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: lambda256/${{ steps.name.outputs.value }}:v${{ steps.version.outputs.value }}-${{ env.COMMIT_SHA }}
+          build-args: |
+            "PAT=${{ secrets.PA_TOKEN_LUNIVERSEDEVOPS }}"
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trigger helm repos workflow
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PA_TOKEN_LUNIVERSEDEVOPS }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: context.repo.owner,
+              repo: 'lambda-indexer-chart-values',
+              event_type: 'webhook',
+              client_payload: {
+                actor: '${{ github.actor }}',
+                ref_name: '${{ github.ref_name }}',
+                applicationName: '${{ steps.name.outputs.value }}',
+                imageTag: 'lambda256/${{ steps.name.outputs.value }}:v${{ steps.version.outputs.value }}-${{ env.COMMIT_SHA }}'
+              }
+            })
+
+      # - name: Send Slack Notification
+      #   id: slack
+      #   uses: slackapi/slack-github-action@v1.25.0
+      #   with:
+      #     # This data can be any valid JSON from a previous step in the GitHub Action
+      #     payload: |
+      #       {
+      #         "image": "lambda256/${{ steps.name.outputs.value }}:v${{ steps.version.outputs.value }}-${{ env.COMMIT_SHA }}"
+      #       }
+      #   env:
+      #     SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
