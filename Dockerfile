@@ -1,11 +1,11 @@
 FROM ubuntu
-MAINTAINER wendal "wendal1985@gmail.com"
+LABEL maintainer="wendal <wendal1985@gmail.com>"
 
 # Set the env variable DEBIAN_FRONTEND to noninteractive
-ENV DEBIAN_FRONTEND noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
-  apt-get install -y python2.7 && \
+  apt-get install -y python3 && \
   apt-get install -y --force-yes git make gcc g++ autoconf && apt-get clean && \
   git clone --depth 1 https://github.com/ideawu/ssdb.git ssdb && \
   cd ssdb && make && make install && cp ssdb-server /usr/bin && \
@@ -25,7 +25,7 @@ RUN mkdir -p /var/lib/ssdb && \
     -i /etc/ssdb.conf
 
 
-ENV TZ Asia/Shanghai
+ENV TZ=Asia/Shanghai
 EXPOSE 8888
 VOLUME /var/lib/ssdb
-ENTRYPOINT /usr/bin/ssdb-server /etc/ssdb.conf
+ENTRYPOINT ["/usr/bin/ssdb-server", "/etc/ssdb.conf"]
